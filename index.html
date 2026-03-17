@@ -1289,7 +1289,136 @@ window.onload=init;
 window.addEventListener('firebaseSyncSuccess',()=>{ const i=document.getElementById('firebaseSyncIndicator');if(i)i.className='firebase-sync synced'; });
 window.addEventListener('firebaseSyncError',()=>{ const i=document.getElementById('firebaseSyncIndicator');if(i)i.className='firebase-sync'; });
 </script>
-<script type="module" src="firebase.js"></script>
-<script type="module" src="sync.js"></script>
+
+<!-- ═══════════════════════════════════════════
+     FIREBASE + FIRESTORE SYNC
+═══════════════════════════════════════════ -->
+<script type="module">
+import { initializeApp }       from "https://www.gstatic.com/firebasejs/12.10.0/firebase-app.js";
+import {
+    getFirestore, doc, getDoc, setDoc, onSnapshot, serverTimestamp
+} from "https://www.gstatic.com/firebasejs/12.10.0/firebase-firestore.js";
+
+const firebaseConfig = {
+    apiKey:            "AIzaSyB0k-wardH1D-htS8IBBdZ45cHT9rxtfWU",
+    authDomain:        "chgeladas-a7f5d.firebaseapp.com",
+    projectId:         "chgeladas-a7f5d",
+    storageBucket:     "chgeladas-a7f5d.firebasestorage.app",
+    messagingSenderId: "979049326250",
+    appId:             "1:979049326250:web:a5f94ffeeae986d26952d3",
+    measurementId:     "G-VZ68GQGCED"
+};
+
+const app = initializeApp(firebaseConfig);
+const firestore = getFirestore(app);
+const DOC_REF = doc(firestore, "chgeladas", "pdv_main");
+
+const IND = () => document.getElementById('firebaseSyncIndicator');
+const setInd = cls => { const i=IND(); if(i) i.className=cls; };
+
+// ── Throttle: só envia ao Firestore se passaram >= 2s desde o último push ──
+let lastPush = 0;
+let pushTimer = null;
+
+function scheduleSync() {
+    clearTimeout(pushTimer);
+    pushTimer = setTimeout(pushToFirestore, 2000);
+}
+
+async function pushToFirestore() {
+    try {
+        const raw = localStorage.getItem('CH_GELADAS_DB_ENTERPRISE');
+        if(!raw) return;
+        const data = JSON.parse(raw);
+        setInd('firebase-sync syncing');
+        await setDoc(DOC_REF, {
+            payload: raw,
+            _updatedAt: Date.now()
+        });
+        lastPush = Date.now();
+        setInd('firebase-sync synced');
+        window.dispatchEvent(new Event('firebaseSyncSuccess'));
+    } catch(e) {
+        console.warn('[Firebase] push error:', e.message);
+        setInd('firebase-sync');
+        window.dispatchEvent(new Event('firebaseSyncError'));
+    }
+}
+
+// ── Listener em tempo real: recebe atualizações de outros dispositivos ──
+let localUpdatedAt = 0;
+
+function applyRemoteSnapshot(docData) {
+    if(!docData || !docData.payload || !docData._updatedAt) return;
+    const remoteTs = docData._updatedAt;
+    // Evita aplicar o que nós mesmos acabamos de enviar (± 3s)
+    if(remoteTs <= localUpdatedAt) return;
+    if(Math.abs(remoteTs - lastPush) < 3000) return;
+
+    try {
+        const parsed = JSON.parse(docData.payload);
+        if(!parsed || !Array.isArray(parsed.estoque)) return;
+
+        // Mesclagem conservadora: só sobrescreve se o remoto for mais novo
+        const localRaw = localStorage.getItem('CH_GELADAS_DB_ENTERPRISE');
+        if(localRaw) {
+            const local = JSON.parse(localRaw);
+            const localTs = local._updatedAt || 0;
+            if(remoteTs <= localTs) return; // local é mais novo, ignora
+        }
+
+        // Aplica: salva no localStorage e recarrega o estado em memória
+        localStorage.setItem('CH_GELADAS_DB_ENTERPRISE', docData.payload);
+        localUpdatedAt = remoteTs;
+
+        // Notifica o app principal (window.db e UI)
+        if(typeof window.db !== 'undefined') {
+            Object.assign(window.db, parsed);
+        }
+        if(typeof window.renderCatalogo === 'function')   window.renderCatalogo();
+        if(typeof window.renderGridEstoque === 'function') window.renderGridEstoque();
+        if(typeof window.renderPontoLogs === 'function' &&
+           document.getElementById('ponto')?.classList.contains('active'))
+            window.renderPontoLogs();
+
+        setInd('firebase-sync synced');
+        console.log('[Firebase] snapshot remoto aplicado', new Date(remoteTs).toLocaleTimeString());
+    } catch(e) {
+        console.warn('[Firebase] applyRemoteSnapshot error:', e.message);
+    }
+}
+
+// Inicia listener assim que DOM estiver pronto
+window.addEventListener('load', async () => {
+    // 1. Carrega snapshot inicial do Firestore (first-load / offline recovery)
+    try {
+        const snap = await getDoc(DOC_REF);
+        if(snap.exists()) {
+            applyRemoteSnapshot(snap.data());
+        }
+    } catch(e) {
+        console.warn('[Firebase] getDoc error:', e.message);
+    }
+
+    // 2. Listener em tempo real
+    onSnapshot(DOC_REF, (snap) => {
+        if(snap.exists()) applyRemoteSnapshot(snap.data());
+    }, (e) => {
+        console.warn('[Firebase] onSnapshot error:', e.message);
+        setInd('firebase-sync');
+    });
+
+    // 3. Intercepta o save() do app para disparar sync
+    const originalSave = window.save;
+    if(typeof originalSave === 'function') {
+        window.save = function() {
+            // Adiciona timestamp ao db antes de salvar
+            if(window.db) window.db._updatedAt = Date.now();
+            originalSave.apply(this, arguments);
+            scheduleSync();
+        };
+    }
+});
+</script>
 </body>
 </html>
