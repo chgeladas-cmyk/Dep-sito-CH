@@ -1,6 +1,6 @@
 // CH Geladas PDV — Service Worker
 // BUMP esta versão a cada deploy para forçar atualização do cache nos clientes
-const CACHE_NAME = 'ch-geladas-v2';
+const CACHE_NAME = 'ch-geladas-v3'; // FIX-04: bump obrigatório — app-fiado.js adicionado ao cache
 
 const ASSETS_TO_CACHE = [
   '/',
@@ -15,6 +15,7 @@ const ASSETS_TO_CACHE = [
   '/app-ponto.js',
   '/app-comanda.js',
   '/app-notif.js',
+  '/app-fiado.js',   // FIX-04: estava ausente — fiado não funcionava offline
   '/firebase.js',
   '/sync.js',
   // Ícones PWA

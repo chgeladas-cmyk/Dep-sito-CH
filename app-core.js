@@ -32,11 +32,14 @@ const CONSTANTS = Object.freeze({
   }),
   LOW_STOCK_THRESHOLD: 3,
   // FIFO — limites para evitar estouro do localStorage em uso prolongado
-  MAX_VENDAS:        5_000,
-  MAX_INVENTARIO:    2_000,
-  MAX_PONTO:         1_000,
-  MAX_AUDIT_ESTOQUE: 3_000,
-  MAX_MOVIMENTACOES: 1_000,
+  MAX_VENDAS:           5_000,
+  MAX_INVENTARIO:       2_000,
+  MAX_PONTO:            1_000,
+  MAX_AUDIT_ESTOQUE:    3_000,
+  MAX_MOVIMENTACOES:    1_000,
+  MAX_AUDIT_LOG:        2_000,   // FIX-01: auditLog crescia sem limite → crash localStorage
+  MAX_DELIVERY_PEDIDOS: 2_000,   // FIX-02: pedidos finalizados acumulavam indefinidamente
+  MAX_CAIXA:              500,   // FIX-03: registros de abertura/fechamento sem teto
 });
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -380,12 +383,23 @@ const Store = (() => {
     if (d.vendas.length     > CONSTANTS.MAX_VENDAS)     d.vendas.splice(CONSTANTS.MAX_VENDAS);
     if (d.inventario.length > CONSTANTS.MAX_INVENTARIO) d.inventario.splice(CONSTANTS.MAX_INVENTARIO);
     if (d.ponto.length      > CONSTANTS.MAX_PONTO)      d.ponto.splice(CONSTANTS.MAX_PONTO);
+    // FIX-01: auditLog append-only crescia sem limite — mantém os 2000 mais recentes
+    if (d.auditLog.length   > CONSTANTS.MAX_AUDIT_LOG)  d.auditLog.splice(CONSTANTS.MAX_AUDIT_LOG);
+    // FIX-03: registros de abertura/fechamento de caixa sem teto
+    if (Array.isArray(d.caixa) && d.caixa.length > CONSTANTS.MAX_CAIXA) d.caixa.splice(CONSTANTS.MAX_CAIXA);
     if (!d.delivery) d.delivery = { pedidos: [], clientes: [], entregadores: [], zonas: [] };
     const dlv = d.delivery;
     if (!Array.isArray(dlv.pedidos))      dlv.pedidos      = [];
     if (!Array.isArray(dlv.clientes))     dlv.clientes     = [];
     if (!Array.isArray(dlv.entregadores)) dlv.entregadores = [];
     if (!Array.isArray(dlv.zonas))        dlv.zonas        = [];
+    // FIX-02: FIFO para pedidos — preserva ativos, trunca apenas os finalizados mais antigos
+    if (dlv.pedidos.length > CONSTANTS.MAX_DELIVERY_PEDIDOS) {
+      const ativos     = dlv.pedidos.filter(p => p.status !== 'ENTREGUE' && p.status !== 'CANCELADO');
+      const finalizados = dlv.pedidos.filter(p => p.status === 'ENTREGUE' || p.status === 'CANCELADO');
+      const limite     = Math.max(0, CONSTANTS.MAX_DELIVERY_PEDIDOS - ativos.length);
+      dlv.pedidos = [...ativos, ...finalizados.slice(0, limite)];
+    }
   }
 
   /**
