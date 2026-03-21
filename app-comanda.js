@@ -190,12 +190,14 @@ const ComandaService = (() => {
     const descontoFinal = Math.max(0, Math.min(Number(desconto) || 0, comanda.total));
 
     // Debita estoque e registra inventário via Store.mutate()
+    const _auditItems = [];
     Store.mutate(state => {
       comanda.itens.forEach(item => {
         const prod = state.estoque.find(p => String(p.id) === String(item.prodId));
         if (!prod) return;
         const qtdAntes = prod.qtdUn;
         prod.qtdUn -= item.desconto;
+        _auditItems.push({ prodId: prod.id, produto: prod.nome, qtdAntes, qtdDepois: prod.qtdUn, label: item.label });
         state.inventario.unshift({
           id:           String(Utils.generateId()),
           vendaId,
@@ -211,6 +213,15 @@ const ComandaService = (() => {
         });
       });
     }, true);
+    // Auditoria de estoque — comanda
+    if (typeof _registrarAuditEstoque === 'function') {
+      _auditItems.forEach(a => _registrarAuditEstoque({
+        prodId: a.prodId, produto: a.produto,
+        qtdAntes: a.qtdAntes, qtdDepois: a.qtdDepois,
+        motivo: `Venda via Comanda #${String(vendaId).slice(-6)}`,
+        tipo: 'VENDA',
+      }));
+    }
 
     const subtotal = comanda.total;
     const total    = Math.max(0, subtotal - descontoFinal);

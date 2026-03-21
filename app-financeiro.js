@@ -448,18 +448,23 @@ const FinanceRenderer = (() => {
     _kpisGlobais();
     _periodo_atual();
     _vendaLogs();
+    _renderFormasPgto();
+    _renderRuptura();
+    _renderPorHora();
     _startRT();
   }
 
   function setPeriodo(p) {
     _periodo = p;
-    window._finPeriodo = p;  // exposta para exportação via bridge
+    window._finPeriodo = p;
     ['hoje','semana','mes','ano','geral'].forEach(id => {
       const el = Utils.el(`finTab-${id}`);
       if (el) el.className = p === id ? 'fin-tab active' : 'fin-tab';
     });
     _periodo_atual();
     _vendaLogs();
+    _renderFormasPgto();
+    _renderPorHora();
   }
 
   /* ── KPIs globais ────────────────────────────────────────── */
@@ -815,6 +820,99 @@ const FinanceRenderer = (() => {
       </article>`;
   }
 
+  /* ── Formas de pagamento breakdown ──────────────────────── */
+  function _renderFormasPgto() {
+    const cont = Utils.el('finFormasPgto');
+    if (!cont) return;
+    const vendas = FinanceCalc.filtrarPorPeriodo(_periodo);
+    const mapa = {};
+    vendas.forEach(v => {
+      const pgtos = (v.pagamentos && v.pagamentos.length > 0)
+        ? v.pagamentos
+        : [{ forma: v.formaPgto || 'Não informado', valor: v.total || 0 }];
+      pgtos.forEach(p => {
+        const k = (p.forma || 'Outro').split('(')[0].trim();
+        mapa[k] = (mapa[k] || 0) + (p.valor || 0);
+      });
+    });
+    const total = Object.values(mapa).reduce((a, v) => a + v, 0) || 1;
+    const items = Object.entries(mapa).sort(([,a],[,b]) => b - a);
+    if (!items.length) { cont.innerHTML = '<p class="text-[9px] text-slate-700 font-bold">Sem dados</p>'; return; }
+    const ICONES = { 'Dinheiro':'fa-money-bill-wave text-emerald-400','PIX':'fa-qrcode text-blue-400','Pix':'fa-qrcode text-blue-400','Débito':'fa-credit-card text-purple-400','Crédito':'fa-credit-card text-amber-400','Fiado':'fa-handshake text-red-400' };
+    cont.innerHTML = items.map(([forma, val]) => {
+      const pct  = ((val / total) * 100).toFixed(0);
+      const icon = ICONES[forma] || 'fa-circle text-slate-400';
+      return `
+        <div class="flex items-center gap-2">
+          <i class="fas ${icon} text-[9px] w-4 flex-shrink-0"></i>
+          <div class="flex-1">
+            <div class="flex items-center justify-between mb-0.5">
+              <span class="text-[8px] font-black text-slate-300">${_esc(forma)}</span>
+              <span class="text-[8px] font-black text-white">${Utils.formatCurrency(val)}</span>
+            </div>
+            <div class="h-1 bg-slate-800 rounded-full overflow-hidden">
+              <div class="h-full rounded-full bg-blue-500" style="width:${pct}%"></div>
+            </div>
+          </div>
+          <span class="text-[7px] text-slate-600 font-bold w-7 text-right">${pct}%</span>
+        </div>`;
+    }).join('');
+  }
+
+  /* ── Ruptura de estoque ──────────────────────────────────── */
+  function _renderRuptura() {
+    const cont = Utils.el('finRuptura');
+    if (!cont) return;
+    const thresh  = Store.Selectors.getConfig()?.alertaStock ?? 3;
+    const esgot   = Store.Selectors.getOutOfStockItems();
+    const baixo   = Store.Selectors.getLowStockItems();
+    if (!esgot.length && !baixo.length) {
+      cont.innerHTML = '<p class="text-[9px] text-emerald-400 font-bold">✅ Estoque OK</p>';
+      return;
+    }
+    const rows = [
+      ...esgot.map(p => `<div class="flex items-center justify-between"><span class="text-[9px] text-red-400 font-bold truncate flex-1">${_esc(p.nome)}</span><span class="badge b-red text-[7px] ml-1">Esgotado</span></div>`),
+      ...baixo.map(p  => `<div class="flex items-center justify-between"><span class="text-[9px] text-amber-400 font-bold truncate flex-1">${_esc(p.nome)}</span><span class="text-[8px] text-amber-400 font-black ml-1">${p.qtdUn} un</span></div>`),
+    ];
+    cont.innerHTML = rows.join('');
+  }
+
+  /* ── Vendas por hora (só período "hoje") ─────────────────── */
+  function _renderPorHora() {
+    const wrap = Utils.el('finPorHoraWrap');
+    const cont = Utils.el('finPorHora');
+    if (!wrap || !cont) return;
+
+    if (_periodo !== 'hoje') { wrap.classList.add('hidden'); return; }
+    wrap.classList.remove('hidden');
+
+    const vendas = FinanceCalc.filtrarPorPeriodo('hoje');
+    const horas  = {};
+    vendas.forEach(v => {
+      const h = (v.hora || '00:00').slice(0, 2);
+      if (!horas[h]) horas[h] = { qtd: 0, total: 0 };
+      horas[h].qtd++;
+      horas[h].total += (v.total || 0);
+    });
+
+    const items  = Object.entries(horas).sort(([a], [b]) => a.localeCompare(b));
+    if (!items.length) { cont.innerHTML = '<p class="text-[9px] text-slate-700 font-bold">Sem vendas hoje ainda</p>'; return; }
+
+    const maxQtd = Math.max(...items.map(([, v]) => v.qtd), 1);
+    cont.innerHTML = items.map(([h, v]) => {
+      const pct = ((v.qtd / maxQtd) * 100).toFixed(0);
+      return `
+        <div class="flex items-center gap-2">
+          <span class="text-[8px] font-black text-slate-500 w-10 flex-shrink-0">${h}h</span>
+          <div class="flex-1 h-4 bg-slate-800 rounded overflow-hidden">
+            <div class="h-full bg-gradient-to-r from-cyan-700 to-cyan-500 rounded transition-all" style="width:${pct}%"></div>
+          </div>
+          <span class="text-[8px] font-black text-white w-6 text-right flex-shrink-0">${v.qtd}</span>
+          <span class="text-[8px] font-bold text-slate-500 w-16 text-right flex-shrink-0">${Utils.formatCurrency(v.total)}</span>
+        </div>`;
+    }).join('');
+  }
+
   /* ── Tempo real (30s) ────────────────────────────────────── */
   function _startRT() {
     if (_rtTimer) return;
@@ -822,6 +920,9 @@ const FinanceRenderer = (() => {
       if (!Utils.el('tab-financeiro')?.classList.contains('active')) return;
       _kpisGlobais();
       _periodo_atual();
+      _renderFormasPgto();
+      _renderRuptura();
+      _renderPorHora();
       _set('finAtualizadoEm', `Atualizado ${Utils.now()}`);
     }, 30_000);
   }
@@ -890,3 +991,159 @@ function finExportar()             { FinanceExport.exportarTXT(window._finPeriod
 function finExportarCsv()          { FinanceExport.exportarCSV(window._finPeriodo || 'hoje'); }
 function exportarRelatorio()       { FinanceExport.exportarTXT('geral'); }
 function exportarRelatorioCsv()    { FinanceExport.exportarCSV('geral'); }
+
+/** Exporta fechamento de caixa do dia como TXT estruturado */
+function finExportarFechamentoCaixa() {
+  const hoje = Utils.todayISO();
+  const dispHoje = Utils.today();
+  const cfg = Store.Selectors.getConfig();
+  const nomeLoja = cfg.nome || 'CH Geladas';
+
+  function _dataVenda(v) {
+    const raw = v.dataCurta || (v.data || '').slice(0, 10) || '';
+    if (raw.includes('-')) return raw.slice(0, 10);
+    const [d, m, y] = raw.split('/');
+    return y ? `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}` : raw;
+  }
+
+  const vendasHoje = Store.Selectors.getVendas().filter(v => _dataVenda(v) === hoje);
+  if (!vendasHoje.length) { UIService.showToast('Aviso', 'Sem vendas hoje', 'warning'); return; }
+
+  const fmt  = v => Utils.formatCurrency(v);
+  const SEP  = '═'.repeat(48);
+  const sep  = '─'.repeat(48);
+
+  // Totais por forma
+  const formaMap = {};
+  vendasHoje.forEach(v => {
+    const pgtos = (v.pagamentos && v.pagamentos.length > 0)
+      ? v.pagamentos
+      : [{ forma: v.formaPgto || 'Não informado', valor: v.total || 0 }];
+    pgtos.forEach(p => {
+      const k = (p.forma || 'Outro').split('(')[0].trim();
+      formaMap[k] = (formaMap[k] || 0) + (p.valor || 0);
+    });
+  });
+
+  const totalBruto  = vendasHoje.reduce((a, v) => a + (v.total || 0), 0);
+  const totalLucro  = vendasHoje.reduce((a, v) => a + (v.lucro || 0), 0);
+  const totalDesc   = vendasHoje.reduce((a, v) => a + (v.desconto || 0), 0);
+  const qtdVendas   = vendasHoje.length;
+  const ticket      = qtdVendas > 0 ? totalBruto / qtdVendas : 0;
+
+  const caixaLogs   = Store.Selectors.getCaixa() || [];
+  const abertura    = caixaLogs.find(c => c.tipo === 'ABERTURA');
+  const trocoInicial = abertura ? parseFloat(abertura.valor) || 0 : 0;
+  const fechamento  = caixaLogs.find(c => c.tipo === 'FECHAMENTO');
+  const apurado     = fechamento ? parseFloat(fechamento.valor) || 0 : 0;
+
+  const DINHEIRO    = ['dinheiro','espécie','especie','cash'];
+  const totalDin    = Object.entries(formaMap).filter(([k]) => DINHEIRO.includes(k.toLowerCase())).reduce((a,[,v]) => a + v, 0);
+  const esperado    = trocoInicial + totalDin;
+  const diff        = apurado - esperado;
+
+  // Sangrias do dia
+  const sangrias = (Store.getState().movimentacoes || [])
+    .filter(m => m.tipo === 'saida' && m.categoria === 'sangria' && (m.dataCurta === hoje || (m.data || '').slice(0,10) === hoje))
+    .reduce((a, m) => a + (m.valor || 0), 0);
+
+  // Top produtos
+  const prodMap = {};
+  vendasHoje.forEach(v => (v.itens || []).forEach(i => {
+    if (!prodMap[i.nome]) prodMap[i.nome] = { qtd: 0, total: 0 };
+    prodMap[i.nome].qtd += (i.desconto || 1);
+    prodMap[i.nome].total += (i.preco || 0);
+  }));
+  const topProds = Object.entries(prodMap).sort(([,a],[,b]) => b.total - a.total).slice(0, 8);
+
+  let txt = `${SEP}\n`;
+  txt += `  FECHAMENTO DE CAIXA — ${nomeLoja}\n`;
+  txt += `  Data: ${dispHoje}   Gerado: ${Utils.now()}\n`;
+  txt += `${SEP}\n\n`;
+
+  txt += `RESUMO FINANCEIRO\n${sep}\n`;
+  txt += `Faturamento bruto:   ${fmt(totalBruto)}\n`;
+  txt += `Lucro líquido:       ${fmt(totalLucro)}  (${totalBruto > 0 ? ((totalLucro/totalBruto)*100).toFixed(1) : 0}%)\n`;
+  if (totalDesc > 0) txt += `Total descontos:     ${fmt(totalDesc)}\n`;
+  txt += `Nº de vendas:        ${qtdVendas}\n`;
+  txt += `Ticket médio:        ${fmt(ticket)}\n\n`;
+
+  txt += `CAIXA\n${sep}\n`;
+  txt += `Troco inicial:       ${fmt(trocoInicial)}\n`;
+  if (sangrias > 0) txt += `Sangrias:            -${fmt(sangrias)}\n`;
+  txt += `Esperado (dinheiro): ${fmt(esperado - sangrias)}\n`;
+  if (apurado > 0) {
+    txt += `Apurado:             ${fmt(apurado)}\n`;
+    txt += `Diferença:           ${diff >= 0 ? '+' : ''}${fmt(diff)}${Math.abs(diff) > 1 ? ' ⚠️' : ' ✅'}\n`;
+  }
+  txt += `\n`;
+
+  txt += `FORMAS DE PAGAMENTO\n${sep}\n`;
+  Object.entries(formaMap).sort(([,a],[,b]) => b - a).forEach(([forma, val]) => {
+    txt += `${String(forma).padEnd(22)} ${fmt(val)}\n`;
+  });
+  txt += `\n`;
+
+  if (topProds.length) {
+    txt += `TOP PRODUTOS\n${sep}\n`;
+    topProds.forEach(([nome, d]) => {
+      txt += `${String(nome).padEnd(26)} ${String(d.qtd).padStart(4)} un   ${fmt(d.total)}\n`;
+    });
+    txt += `\n`;
+  }
+
+  txt += `ORIGENS\n${sep}\n`;
+  txt += `PDV: ${vendasHoje.filter(v=>v.origem==='PDV').length}   Comanda: ${vendasHoje.filter(v=>v.origem==='COMANDA').length}   Delivery: ${vendasHoje.filter(v=>v.origem==='DELIVERY').length}\n\n`;
+
+  txt += `${SEP}\n  Gerado em ${Utils.timestamp()}\n${SEP}\n`;
+
+  Utils.downloadBlob(txt, 'text/plain;charset=utf-8;', `Fechamento_Caixa_${hoje}.txt`);
+  UIService.showToast('Fechamento', 'TXT baixado com sucesso');
+}
+
+/** Romaneio de delivery — lista de pedidos ativos para entrega */
+function exportarRomaneioDelivery() {
+  const pedidos = Store.Selectors.getPedidos().filter(p => p.status !== 'CANCELADO' && p.status !== 'ENTREGUE');
+  if (!pedidos.length) { UIService.showToast('Aviso', 'Sem pedidos ativos para romaneio', 'warning'); return; }
+
+  const cfg      = Store.Selectors.getConfig();
+  const nomeLoja = cfg.nome || 'CH Geladas';
+  const hoje     = Utils.today();
+  const SEP      = '═'.repeat(46);
+  const sep      = '─'.repeat(46);
+  const fmt      = v => Utils.formatCurrency(v);
+
+  let txt = `${SEP}\n  ROMANEIO DE DELIVERY — ${nomeLoja}\n  Data: ${hoje}   Gerado: ${Utils.now()}\n${SEP}\n\n`;
+
+  let totalGeral = 0;
+  pedidos.forEach((p, i) => {
+    const status  = p.status || 'NOVO';
+    const cliente = p.clienteNome || p.cliente || '—';
+    const end     = p.endereco || '—';
+    const entrega = p.entregadorNome || p.entregador || '—';
+    const total   = p.total || p.valorTotal || 0;
+    totalGeral   += total;
+
+    txt += `[${i+1}] ${cliente}\n`;
+    txt += `    Endereço:   ${end}\n`;
+    txt += `    Entregador: ${entrega}\n`;
+    txt += `    Status:     ${status}\n`;
+    txt += `    Total:      ${fmt(total)}\n`;
+    if ((p.itens || p.produtos || []).length) {
+      const itens = p.itens || p.produtos || [];
+      itens.forEach(it => {
+        const nome = it.nome || it.produto || '—';
+        const qtd  = it.qtd || it.quantidade || 1;
+        txt += `      · ${qtd}x ${nome}\n`;
+      });
+    }
+    txt += `${sep}\n`;
+  });
+
+  txt += `\nTOTAL GERAL: ${fmt(totalGeral)}\n`;
+  txt += `Pedidos: ${pedidos.length}\n\n`;
+  txt += `Gerado em ${Utils.timestamp()}\n`;
+
+  Utils.downloadBlob(txt, 'text/plain;charset=utf-8;', `Romaneio_${Utils.todayISO()}.txt`);
+  UIService.showToast('Romaneio', `${pedidos.length} pedidos exportados`);
+}

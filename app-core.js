@@ -35,6 +35,8 @@ const CONSTANTS = Object.freeze({
   MAX_VENDAS:        5_000,
   MAX_INVENTARIO:    2_000,
   MAX_PONTO:         1_000,
+  MAX_AUDIT_ESTOQUE: 3_000,
+  MAX_MOVIMENTACOES: 1_000,
 });
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -282,6 +284,9 @@ const Store = (() => {
     comandas:   [],
     movimentacoes: [],   // entradas e saídas manuais
     auditLog:   [],      // log imutável de auditoria (append-only)
+    auditEstoque: [],    // log detalhado de ajustes manuais de estoque
+    fiado:      { clientes: [] },  // sistema de vendas a prazo
+    backupHistory: [],   // pontos de restauração automáticos
     investimento: 0,
     config:     { whatsapp: '' },
     delivery:   {
@@ -360,6 +365,13 @@ const Store = (() => {
     if (!Array.isArray(d.inventario)) d.inventario = [];
     if (!Array.isArray(d.auditLog))       d.auditLog       = [];
     if (!Array.isArray(d.movimentacoes)) d.movimentacoes = [];
+    if (!Array.isArray(d.auditEstoque)) d.auditEstoque = [];
+    if (d.auditEstoque.length > CONSTANTS.MAX_AUDIT_ESTOQUE) d.auditEstoque.splice(CONSTANTS.MAX_AUDIT_ESTOQUE);
+    if (d.movimentacoes.length > CONSTANTS.MAX_MOVIMENTACOES) d.movimentacoes.splice(CONSTANTS.MAX_MOVIMENTACOES);
+    if (!d.fiado)                         d.fiado = { clientes: [] };
+    if (!Array.isArray(d.fiado.clientes)) d.fiado.clientes = [];
+    if (!Array.isArray(d.backupHistory))  d.backupHistory = [];
+    if (d.backupHistory.length > 10)      d.backupHistory.splice(10); // máx 10 pontos
     if (!Array.isArray(d.caixa))      d.caixa      = [];
     if (!Array.isArray(d.comandas))   d.comandas   = [];
     if (typeof d.investimento !== 'number') d.investimento = 0;
@@ -402,6 +414,10 @@ const Store = (() => {
   /** Selectors — acesso tipado e seguro ao estado */
   const Selectors = Object.freeze({
     getMovimentacoes:  () => _state.movimentacoes,
+    getAuditEstoque:   () => _state.auditEstoque,
+    getFiado:          () => _state.fiado,
+    getFiadoClientes:  () => _state.fiado?.clientes || [],
+    getFiadoClienteById: id => (_state.fiado?.clientes || []).find(c => String(c.id) === String(id)) || null,
     getEstoque:        () => _state.estoque,
     getVendas:         () => _state.vendas,
     getPonto:          () => _state.ponto,
@@ -867,6 +883,10 @@ const CartService = (() => {
   let _desconto   = 0;
   /** Pagamentos múltiplos: [{forma, valor}] */
   let _pagamentos = [];
+  /** Proteção contra checkout duplo */
+  let _checkoutLock = false;
+  /** Debounce por produto: evita duplo-toque acidental (<400ms) */
+  const _lastAddTs = new Map();
 
   /* ── Getters ─────────────────────────────────────────────── */
   const getItems     = () => [..._items];
@@ -917,6 +937,12 @@ const CartService = (() => {
    * @param {HTMLElement|null} btnEl — botão que gerou a ação (para animação)
    */
   function addItem(prodId, packIdx, btnEl = null) {
+    // Debounce: bloqueia duplo-toque no mesmo produto (<400ms)
+    const tsKey = `${prodId}:${packIdx}`;
+    const now   = Date.now();
+    if (now - (_lastAddTs.get(tsKey) || 0) < 400) return;
+    _lastAddTs.set(tsKey, now);
+
     const product = Store.Selectors.getProdutoById(prodId);
     if (!product) return;
 
@@ -1004,7 +1030,8 @@ const CartService = (() => {
    * @returns {object|null} venda registrada ou null em caso de erro
    */
   function checkout() {
-    if (isEmpty()) return null;
+    if (isEmpty() || _checkoutLock) return null;
+    _checkoutLock = true;
 
     const now    = new Date();
     const today  = Utils.todayISO();
@@ -1061,6 +1088,7 @@ const CartService = (() => {
     const vendaSnapshot = { ...venda };
     clear();
     EventBus.emit('cart:checkout', vendaSnapshot);
+    setTimeout(() => { _checkoutLock = false; }, 1_500);
     return vendaSnapshot;
   }
 
@@ -1095,7 +1123,8 @@ const RenderService = (() => {
 
   /* ── Catálogo ─────────────────────────────────────────────── */
   /* ── Filtro por categoria ─────────────────────────────────── */
-  let _activeCat = null;
+  let _activeCat  = null;
+  let _activeMode = 'todos';
 
   function setCatFilter(cat) {
     _activeCat = (_activeCat === cat) ? null : cat;
@@ -1103,19 +1132,39 @@ const RenderService = (() => {
     renderCatalogo();
   }
 
+  function setCatalogMode(mode) {
+    _activeMode = (_activeMode === mode) ? 'todos' : mode;
+    renderCatFilter();
+    renderCatalogo();
+  }
+
   function renderCatFilter() {
-    const row = Utils.el('catFilterRow');
+    const row  = Utils.el('catFilterRow');
     if (!row) return;
     const cats = Store.Selectors.getConfig()?.categorias || [];
-    if (cats.length === 0) { row.classList.add('hidden'); return; }
     row.classList.remove('hidden');
-    const pill = (label, val) => {
-      const active = _activeCat === val;
-      return `<button onclick="setCatFilter(${val === null ? 'null' : `'${val.replace(/'/g, "\\'")}'`})" ` +
-        `class="flex-shrink-0 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wide transition-all border ` +
-        `${active ? 'bg-blue-600 text-white border-blue-500' : 'bg-slate-900 text-slate-400 border-white/10 hover:border-blue-500/40'}">${label}</button>`;
+
+    const modePill = (label, mode, icon) => {
+      const a = _activeMode === mode;
+      return '<button onclick="setCatalogMode(\'' + mode + '\')" class="flex-shrink-0 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wide transition-all border flex items-center gap-1 ' +
+        (a ? 'bg-blue-600 text-white border-blue-500' : 'bg-slate-900 text-slate-400 border-white/10 hover:border-blue-500/40') +
+        '"><i class=\"fas ' + icon + ' text-[8px]\"></i>' + label + '</button>';
     };
-    row.innerHTML = pill('Todos', null) + cats.map(c => pill(c, c)).join('');
+    const catPill = (label, val) => {
+      const a = _activeCat === val;
+      const onclick = val === null ? 'setCatFilter(null)' : "setCatFilter('" + val.replace(/'/g, "\\'") + "')";
+      return '<button onclick="' + onclick + '" class="flex-shrink-0 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wide transition-all border ' +
+        (a ? 'bg-violet-600 text-white border-violet-500' : 'bg-slate-900 text-slate-400 border-white/10 hover:border-violet-500/40') +
+        '">' + label + '</button>';
+    };
+
+    const modes = modePill('Disponíveis', 'disponiveis', 'fa-check-circle') +
+                  modePill('Mais Vendidos', 'topsellers', 'fa-fire');
+    const catPills = cats.length > 0
+      ? '<span class="w-px h-4 bg-white/10 self-center flex-shrink-0"></span>' +
+        catPill('Todos', null) + cats.map(c => catPill(c, c)).join('')
+      : '';
+    row.innerHTML = modes + catPills;
   }
 
   function renderCatalogo() {
@@ -1136,11 +1185,25 @@ const RenderService = (() => {
     }
 
     const busca   = (Utils.el('searchProd')?.value || '').toLowerCase();
-    const estoque = Store.Selectors.getEstoque();
+    let estoque = Store.Selectors.getEstoque();
+
+    // Modo: mais vendidos — ordena por quantidade vendida
+    if (_activeMode === 'topsellers') {
+      const mapa = {};
+      Store.Selectors.getVendas().forEach(v => {
+        (v.itens || []).forEach(it => {
+          const k = String(it.prodId || '');
+          mapa[k] = (mapa[k] || 0) + (it.desconto || 1);
+        });
+      });
+      estoque = [...estoque].sort((a, b) => (mapa[String(b.id)] || 0) - (mapa[String(a.id)] || 0));
+    }
+
     const filtered = estoque.filter(p => {
       const buscaOk = !busca || p.nome.toLowerCase().includes(busca);
       const catOk   = !_activeCat || (p.categoria || '') === _activeCat;
-      return buscaOk && catOk;
+      const modeOk  = _activeMode !== 'disponiveis' || p.qtdUn > 0;
+      return buscaOk && catOk && modeOk;
     });
 
     if (filtered.length === 0) {
@@ -1258,21 +1321,28 @@ const RenderService = (() => {
     fillContainer(Utils.el('carrinhoLista'), 'btnLimpar');
     _setText('cartTotal', fmtTotal);
     if (CartService.getDesconto() > 0) {
-      _setText('cartSubtotal', `Subtotal: ${Utils.formatCurrency(CartService.getSubtotal())}`);
-      _setText('cartDesconto', `Desconto: -${Utils.formatCurrency(CartService.getDesconto())}`);
+      _setText('cartSubtotalDesk', `Sub: ${Utils.formatCurrency(CartService.getSubtotal())}`);
     } else {
-      _setText('cartSubtotal', '');
-      _setText('cartDesconto', '');
+      _setText('cartSubtotalDesk', '');
     }
+    _setText('cartSubtotal', '');
+    _setText('cartDesconto', '');
     _setText('cartCount', count > 0 ? `${count} ${count === 1 ? 'item' : 'itens'}` : '');
     const badge = Utils.el('cartBadge');
     if (badge) { badge.textContent = count; badge.classList.toggle('hidden', count === 0); }
+
+    // Quick-pay buttons
+    const qp    = Utils.el('quickPayBtns');
+    const qpMob = Utils.el('quickPayBtnsMob');
+    if (qp)    qp.classList.toggle('hidden', count === 0);
+    if (qpMob) qpMob.classList.toggle('hidden', count === 0);
+
     const btn = Utils.el('btnFinalizar');
     if (btn) {
       btn.disabled = count === 0;
       btn.className = count > 0
-        ? 'w-full py-4 rounded-xl font-black uppercase text-[10px] tracking-widest transition-all bg-blue-600 text-white shadow-lg shadow-blue-500/25 hover:bg-blue-500'
-        : 'w-full py-4 rounded-xl font-black uppercase text-[10px] tracking-widest transition-all bg-slate-800 text-slate-500 cursor-not-allowed';
+        ? 'w-full py-3 rounded-xl font-black uppercase text-[10px] tracking-widest transition-all bg-slate-700/60 text-slate-300 border border-white/8 hover:bg-slate-700'
+        : 'w-full py-3 rounded-xl font-black uppercase text-[10px] tracking-widest transition-all bg-slate-800 text-slate-500 cursor-not-allowed';
     }
 
     // Mobile drawer
@@ -1285,8 +1355,8 @@ const RenderService = (() => {
     if (btnMob) {
       btnMob.disabled = count === 0;
       btnMob.className = count > 0
-        ? 'w-full py-4 rounded-xl font-black uppercase text-[10px] tracking-widest transition-all bg-blue-600 text-white shadow-lg shadow-blue-500/25 hover:bg-blue-500'
-        : 'w-full py-4 rounded-xl font-black uppercase text-[10px] tracking-widest transition-all bg-slate-800 text-slate-500 cursor-not-allowed';
+        ? 'w-full py-3 rounded-xl font-black uppercase text-[10px] tracking-widest transition-all bg-slate-700/60 text-slate-300 border border-white/8'
+        : 'w-full py-3 rounded-xl font-black uppercase text-[10px] tracking-widest transition-all bg-slate-800 text-slate-500 cursor-not-allowed';
     }
 
     // Float button
@@ -1348,7 +1418,107 @@ const RenderService = (() => {
       .replace(/'/g, '&#39;');
   }
 
-  return Object.freeze({ renderCatalogo, renderCarrinho, updateStats, renderCatFilter, setCatFilter, _escapeHtml, get _activeCat() { return _activeCat; } });
+  /* ── Modo Turbo — top-sellers + atalhos por categoria ────── */
+  const _EMOJI_CAT = {
+    'cerveja': '🍺', 'beer': '🍺', 'lata': '🍺', 'litrão': '🍶', 'litrao': '🍶',
+    'whisky': '🥃', 'dose': '🥃', 'destilado': '🥃', 'vodka': '🥃', 'rum': '🥃',
+    'refrigerante': '🥤', 'refri': '🥤', 'suco': '🥤', 'energético': '⚡',
+    'água': '💧', 'agua': '💧', 'gelo': '🧊', 'copo': '🥂', 'vinho': '🍷',
+  };
+
+  const _CATEGORY_SHORTCUTS = [
+    { label: 'Cerveja Lata', keys: ['cerveja lata', 'lata'], emoji: '🍺' },
+    { label: 'Litrão',       keys: ['litrão', 'litrao', '1l', '1 l'], emoji: '🍶' },
+    { label: 'Whisky',       keys: ['whisky', 'whiskey', 'dose'],      emoji: '🥃' },
+    { label: 'Gelo',         keys: ['gelo'],                            emoji: '🧊' },
+    { label: 'Refrigerante', keys: ['refrigerante', 'refri'],           emoji: '🥤' },
+    { label: 'Água',         keys: ['água', 'agua'],                    emoji: '💧' },
+  ];
+
+  function _emojiFit(nome) {
+    const n = (nome || '').toLowerCase();
+    for (const [k, e] of Object.entries(_EMOJI_CAT)) {
+      if (n.includes(k)) return e;
+    }
+    return '🍶';
+  }
+
+  function renderTurboMode() {
+    const cont = Utils.el('turboGrid');
+    if (!cont) return;
+
+    const estoque = Store.Selectors.getEstoque();
+
+    // Agrega quantidades por produto a partir do histórico de vendas
+    const mapa = {};
+    Store.Selectors.getVendas().forEach(v => {
+      (v.itens || []).forEach(it => {
+        const key = String(it.prodId || '');
+        if (!key) return;
+        if (!mapa[key]) mapa[key] = { prodId: key, nome: it.nome || '', qtd: 0 };
+        mapa[key].qtd += (it.desconto || 1);
+      });
+    });
+
+    const top = Object.values(mapa).sort((a, b) => b.qtd - a.qtd).slice(0, 8);
+
+    // Atalhos de categoria fixos — encontra o primeiro produto que bate
+    const shortcuts = _CATEGORY_SHORTCUTS.map(sc => {
+      const prod = estoque.find(p => {
+        const n = (p.nome || '').toLowerCase();
+        return sc.keys.some(k => n.includes(k));
+      });
+      return prod ? { ...sc, prod } : null;
+    }).filter(Boolean);
+
+    if (!top.length && !shortcuts.length) {
+      cont.innerHTML = `<p class="col-span-4 text-center text-slate-700 text-[9px] font-black uppercase py-3">Realize algumas vendas para popular</p>`;
+      return;
+    }
+
+    const frag = document.createDocumentFragment();
+
+    // Primeiro: atalhos de categoria
+    shortcuts.forEach(sc => {
+      const p = sc.prod;
+      const esgotado = p.qtdUn <= 0;
+      const div = document.createElement('div');
+      div.innerHTML = `
+        <button onclick="addCart('${p.id}', 0, this)" ${esgotado ? 'disabled' : ''}
+          class="turbo-btn ${esgotado ? 'esgotado' : ''}" title="${_escapeHtml(p.nome)}">
+          <span class="text-xl leading-none">${sc.emoji}</span>
+          <p class="text-[7px] font-black text-amber-300 uppercase leading-none">${_escapeHtml(sc.label)}</p>
+          <p class="text-[9px] font-black text-white">R$ ${p.precoUn.toFixed(2)}</p>
+          <p class="text-[7px] text-slate-600 font-bold">${esgotado ? 'Esgotado' : p.qtdUn + ' un'}</p>
+        </button>`;
+      frag.appendChild(div.firstElementChild);
+    });
+
+    // Depois: top-sellers que não estão nos shortcuts
+    const shortcutIds = new Set(shortcuts.map(s => String(s.prod.id)));
+    top.filter(t => !shortcutIds.has(String(t.prodId))).slice(0, Math.max(0, 8 - shortcuts.length)).forEach(t => {
+      const prod = Store.Selectors.getProdutoById(t.prodId);
+      if (!prod) return;
+      const esgotado = prod.qtdUn <= 0;
+      const div = document.createElement('div');
+      div.innerHTML = `
+        <button onclick="addCart('${prod.id}', 0, this)" ${esgotado ? 'disabled' : ''}
+          class="turbo-btn ${esgotado ? 'esgotado' : ''}">
+          <span class="text-xl leading-none">${_emojiFit(prod.nome)}</span>
+          <p class="text-[8px] font-black text-white leading-tight w-full"
+            style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">
+            ${_escapeHtml(prod.nome)}</p>
+          <p class="text-[9px] font-black text-blue-400">R$ ${prod.precoUn.toFixed(2)}</p>
+          <p class="text-[7px] text-slate-600 font-bold">${esgotado ? 'Esgotado' : prod.qtdUn + ' un'}</p>
+        </button>`;
+      frag.appendChild(div.firstElementChild);
+    });
+
+    cont.innerHTML = '';
+    cont.appendChild(frag);
+  }
+
+  return Object.freeze({ renderCatalogo, renderCarrinho, updateStats, renderCatFilter, setCatFilter, setCatalogMode, renderTurboMode, _escapeHtml, get _activeCat() { return _activeCat; }, get _activeMode() { return _activeMode; } });
 })();
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -1366,6 +1536,7 @@ const TabManager = (() => {
     inventario: () => { if (typeof renderInventario === 'function') renderInventario(); },
     ia:         () => { if (typeof renderIA         === 'function') renderIA();         },
     comanda:    () => { if (typeof renderComandas   === 'function') renderComandas();   },
+    fiado:      () => { if (typeof renderFiado      === 'function') renderFiado();      },
     delivery:   () => {
       if (typeof renderDelivery          === 'function') renderDelivery();
       if (typeof populateMpProdutos      === 'function') populateMpProdutos();
@@ -1526,6 +1697,18 @@ const VendaService = (() => {
    * @param {string} forma
    */
   function confirmarPagamento(forma) {
+    if (forma === 'Fiado') {
+      UIService.closeModal('modalPagamento');
+      const total = CartService.getTotal();
+      if (typeof FiadoService !== 'undefined') {
+        FiadoService.abrirSelecaoCliente(total);
+      } else {
+        // Fallback sem rastreio de cliente
+        CartService.setFormaPgto('Fiado');
+        finalizarVenda();
+      }
+      return;
+    }
     CartService.setFormaPgto(forma);
     UIService.closeModal('modalPagamento');
     finalizarVenda();
@@ -1598,20 +1781,62 @@ const VendaService = (() => {
   function finalizarVenda() {
     const btn    = Utils.el('btnFinalizar');
     const btnMob = Utils.el('btnFinalizarMob');
-    // FIX: verificar ambos os botões (desktop + mobile) para evitar duplo-toque
     if ((btn?.disabled && btnMob?.disabled) || CartService.isEmpty()) return;
     if (btn)    btn.disabled    = true;
     if (btnMob) btnMob.disabled = true;
 
-    // Áudio de venda
     try { Utils.el('audioVenda')?.play(); } catch (_) {}
 
     const venda = CartService.checkout();
     if (!venda) { if (btn) btn.disabled = false; return; }
 
     _lastSale = venda;
+    _populateRecibo(venda);
     EventBus.emit('venda:concluida', venda);
     UIService.openModal('modalVenda');
+  }
+
+  /** Preenche o recibo visual no modal */
+  function _populateRecibo(venda) {
+    const cfg      = Store.Selectors.getConfig();
+    const nomeLoja = cfg.nome || 'CH Geladas';
+    const _s       = (id, v) => { const el = Utils.el(id); if (el) el.textContent = v ?? ''; };
+    const _t       = v => Utils.formatCurrency(v);
+
+    _s('recNomeLoja', nomeLoja);
+    _s('recId',       `#${String(venda.id).slice(-6)}`);
+    _s('recTotal',    _t(venda.total));
+    _s('recDataHora', `${venda.data || ''}${venda.hora ? ' · ' + venda.hora : ''}`);
+
+    // Itens
+    const itensEl = Utils.el('recItens');
+    if (itensEl) {
+      itensEl.innerHTML = (venda.itens || []).map(i => `
+        <div class="flex justify-between items-center">
+          <div class="flex items-center gap-2 min-w-0">
+            <span class="text-[8px] font-black text-slate-500 bg-slate-800 px-1.5 py-0.5 rounded flex-shrink-0">${i.label === 'UNID' ? '1x' : i.label}</span>
+            <span class="text-[10px] font-bold text-slate-300 truncate">${i.nome || ''}</span>
+          </div>
+          <span class="text-[10px] font-black text-white flex-shrink-0 ml-2">${_t(i.preco)}</span>
+        </div>`).join('');
+    }
+
+    // Desconto
+    const hasDesc = (venda.desconto || 0) > 0;
+    const descRow  = Utils.el('recDescontoRow');
+    const descValRow = Utils.el('recDescontoValRow');
+    if (descRow)    descRow.classList.toggle('hidden', !hasDesc);
+    if (descValRow) descValRow.classList.toggle('hidden', !hasDesc);
+    if (hasDesc) {
+      _s('recSubtotal', _t(venda.subtotal || venda.total));
+      _s('recDesconto', `-${_t(venda.desconto)}`);
+    }
+
+    // Pagamento
+    const pgtoStr = (venda.pagamentos && venda.pagamentos.length > 1)
+      ? venda.pagamentos.map(p => `${p.forma}: ${_t(p.valor)}`).join(' + ')
+      : (venda.formaPgto || '');
+    _s('recPgto', pgtoStr ? `💳 ${pgtoStr}` : '');
   }
 
   function fecharModalVenda() {
@@ -1723,6 +1948,21 @@ const Bootstrap = (() => {
         UIService.showToast('Segurança', 'PIN padrão detectado — considere alterar nas configurações', 'warning');
       }, 2500);
     }
+
+    // Alerta de caixa fechado — obrigatório para PDV
+    setTimeout(() => {
+      if (!Store.Selectors.isCaixaOpen()) {
+        const banner = Utils.el('caixaFechadoBanner');
+        if (banner) {
+          banner.classList.remove('hidden');
+          banner.classList.add('flex');
+        }
+        if (role !== 'admin') {
+          UIService.showToast('Atenção', 'Abra o caixa antes de vender', 'warning');
+        }
+      }
+    }, 600);
+
     UIService.startClock();
     UIService.refreshAlerts();
 
@@ -1735,13 +1975,15 @@ const Bootstrap = (() => {
     if (_nomeCfg) document.title = _nomeCfg;
     RenderService.renderCatFilter();
     RenderService.renderCatalogo();
+    RenderService.renderTurboMode();
     RenderService.renderCarrinho();
     if (typeof renderEstoque    === 'function') renderEstoque();
     if (typeof renderPonto      === 'function') renderPonto();
-    if (typeof renderFinanceiro === 'function') renderFinanceiro(); // FIX: era o único módulo não pré-renderizado
+    if (typeof renderFinanceiro === 'function') renderFinanceiro();
     if (typeof renderDelivery   === 'function') renderDelivery();
     if (typeof renderComandas   === 'function') renderComandas();
     if (typeof renderFluxo      === 'function') renderFluxo();
+    if (typeof renderFiado      === 'function') renderFiado();
     if (typeof populateMpZonas       === 'function') populateMpZonas();
     if (typeof populateMpEntregadores === 'function') populateMpEntregadores();
 
@@ -1781,7 +2023,11 @@ const Bootstrap = (() => {
     });
 
     // Atualiza aviso do PDV quando caixa ou ponto muda
-    EventBus.on('caixa:aberto',     () => RenderService.renderCatalogo());
+    EventBus.on('caixa:aberto',     () => {
+      RenderService.renderCatalogo();
+      const banner = Utils.el('caixaFechadoBanner');
+      if (banner) { banner.classList.add('hidden'); banner.classList.remove('flex'); }
+    });
     EventBus.on('caixa:fechado',    () => RenderService.renderCatalogo());
     EventBus.on('ponto:registered', () => RenderService.renderCatalogo());
 
@@ -1789,7 +2035,7 @@ const Bootstrap = (() => {
     EventBus.on('cart:item-added',   () => RenderService.renderCarrinho());
     EventBus.on('cart:item-removed', () => RenderService.renderCarrinho());
     EventBus.on('cart:cleared',      () => RenderService.renderCarrinho());
-    EventBus.on('cart:checkout',     () => RenderService.updateStats());
+    EventBus.on('cart:checkout',     () => { RenderService.updateStats(); RenderService.renderTurboMode(); });
 
     // Float-cart bounce ao adicionar item
     EventBus.on('cart:item-added', () => {
@@ -1946,6 +2192,72 @@ function fecharModalVenda()            { VendaService.fecharModalVenda(); }
 function baixarTxt()                   { VendaService.baixarComprovante(); }
 function enviarWhatsapp()              { VendaService.enviarWhatsapp(); }
 
+/**
+ * Pagamento rápido — finaliza venda em 1 toque sem abrir modal.
+ * Usado pelos botões Dinheiro / Pix / Cartão no carrinho.
+ * @param {'Dinheiro'|'Pix'|'Cartão'} forma
+ */
+function quickPay(forma) {
+  if (CartService.isEmpty()) return;
+
+  const bloqueio = _getPdvBloqueio();
+  if (bloqueio) {
+    UIService.showToast('Acesso Bloqueado', bloqueio, 'error');
+    TabManager.switchTab('ponto');
+    return;
+  }
+
+  CartService.setFormaPgto(forma);
+  VendaService.finalizarVenda();
+}
+
+/** Copia recibo formatado para o clipboard */
+async function copiarRecibo() {
+  const v = VendaService.getLastSale();
+  if (!v) return;
+  const cfg      = Store.Selectors.getConfig();
+  const nomeLoja = cfg.nome || 'CH Geladas';
+  const fmt      = val => Utils.formatCurrency(val);
+  const SEP      = '─'.repeat(28);
+
+  let txt = `🧾 *${nomeLoja}*\n`;
+  txt    += `📅 ${v.data || ''}${v.hora ? ' · ' + v.hora : ''}\n`;
+  txt    += `${SEP}\n`;
+  (v.itens || []).forEach(i => {
+    const qt = i.label === 'UNID' ? '1x' : i.label;
+    txt += `${qt} ${i.nome} · ${fmt(i.preco)}\n`;
+  });
+  txt += `${SEP}\n`;
+  if ((v.desconto || 0) > 0) {
+    txt += `Subtotal: ${fmt(v.subtotal || v.total)}\n`;
+    txt += `🏷️ Desconto: -${fmt(v.desconto)}\n`;
+  }
+  if ((v.pagamentos || []).length > 1) {
+    v.pagamentos.forEach(p => { txt += `💳 ${p.forma}: ${fmt(p.valor)}\n`; });
+  } else if (v.formaPgto) {
+    txt += `💳 ${v.formaPgto}\n`;
+  }
+  txt += `*TOTAL: ${fmt(v.total)}*\n`;
+  txt += `${SEP}\n`;
+  txt += `#${String(v.id).slice(-6)} · Obrigado! 🍺`;
+
+  try {
+    await navigator.clipboard.writeText(txt);
+    UIService.showToast('Copiado!', 'Recibo copiado para o clipboard', 'success');
+  } catch {
+    // Fallback para devices sem clipboard API
+    const ta = document.createElement('textarea');
+    ta.value = txt;
+    ta.style.position = 'fixed';
+    ta.style.opacity  = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    UIService.showToast('Copiado!', 'Recibo copiado', 'success');
+  }
+}
+
 function salvarZap() {
   const raw = Utils.el('zapNum')?.value || '';
   Store.mutate(state => { state.config.whatsapp = raw.replace(/\D/g, ''); }, true);
@@ -2019,8 +2331,9 @@ Object.defineProperty(window, 'lastSale', {
   configurable: true,
 });
 
-/* ── Bridge global setCatFilter ─────────────────────────────────── */
-function setCatFilter(cat) { RenderService.setCatFilter(cat); }
+/* ── Bridge global setCatFilter e setCatalogMode ─────────────────── */
+function setCatFilter(cat)       { RenderService.setCatFilter(cat); }
+function setCatalogMode(mode)    { RenderService.setCatalogMode(mode); }
 
 /* ── Configurações ──────────────────────────────────────────────── */
 
@@ -2143,4 +2456,13 @@ async function testarTelegram() {
 }
 
 /* ── Inicia a aplicação ─────────────────────────────────────────── */
+function toggleTurbo() {
+  const panel   = Utils.el('turboPanel');
+  const chevron = Utils.el('turboChevron');
+  if (!panel) return;
+  const open = panel.classList.toggle('hidden') === false;
+  if (chevron) chevron.style.transform = open ? 'rotate(180deg)' : '';
+  if (open) RenderService.renderTurboMode();
+}
+
 Bootstrap.start();
