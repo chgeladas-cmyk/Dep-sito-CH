@@ -6,20 +6,20 @@
 <title>CH Geladas | PDV</title>
 
 <!-- ═══════════════ PWA — Manifest & Icons ═══════════════ -->
-<link rel="manifest" href="/manifest.json">
+<link rel="manifest" href="/Dep-sito-CH/manifest.json">
 
 <!-- iOS PWA (Safari não lê o manifest completo) -->
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="CH Geladas">
-<link rel="apple-touch-icon" href="/icons/icon-192.png">
-<link rel="apple-touch-icon" sizes="152x152" href="/icons/icon-152.png">
+<link rel="apple-touch-icon" href="/Dep-sito-CH/icon-192.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/Dep-sito-CH/icon-152.png">
 
 <!-- Android / Chrome -->
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#060810">
 <meta name="msapplication-TileColor" content="#060810">
-<meta name="msapplication-TileImage" content="/icons/icon-144.png">
+<meta name="msapplication-TileImage" content="/Dep-sito-CH/icon-144.png">
 
 <!-- SEO / OG mínimo -->
 <meta name="description" content="Sistema PDV CH Geladas — vendas, delivery e financeiro">
@@ -2538,7 +2538,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Registra o SW após o load para não bloquear o boot do app
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js', { scope: '/' })
+    navigator.serviceWorker.register('/Dep-sito-CH/sw.js', { scope: '/Dep-sito-CH/' })
       .then(reg => {
         console.info('[PWA] SW registrado:', reg.scope);
 

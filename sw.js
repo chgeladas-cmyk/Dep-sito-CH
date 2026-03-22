@@ -1,32 +1,32 @@
 // CH Geladas PDV — Service Worker
 // BUMP esta versão a cada deploy para forçar atualização do cache nos clientes
-const CACHE_NAME = 'ch-geladas-v3'; // FIX-04: bump obrigatório — app-fiado.js adicionado ao cache
+const CACHE_NAME = 'ch-geladas-v4'; // FIX-04: bump obrigatório — app-fiado.js adicionado ao cache
 
 const ASSETS_TO_CACHE = [
-  '/',
-  '/index.html',
-  '/manifest.json',
+  '/Dep-sito-CH/',
+  '/Dep-sito-CH/index.html',
+  '/Dep-sito-CH/manifest.json',
   // Módulos JS — obrigatórios para funcionamento offline
-  '/app-dialogs.js',
-  '/app-core.js',
-  '/app-financeiro.js',
-  '/app-ia.js',
-  '/app-delivery.js',
-  '/app-ponto.js',
-  '/app-comanda.js',
-  '/app-notif.js',
-  '/app-fiado.js',   // FIX-04: estava ausente — fiado não funcionava offline
-  '/firebase.js',
-  '/sync.js',
+  '/Dep-sito-CH/app-dialogs.js',
+  '/Dep-sito-CH/app-core.js',
+  '/Dep-sito-CH/app-financeiro.js',
+  '/Dep-sito-CH/app-ia.js',
+  '/Dep-sito-CH/app-delivery.js',
+  '/Dep-sito-CH/app-ponto.js',
+  '/Dep-sito-CH/app-comanda.js',
+  '/Dep-sito-CH/app-notif.js',
+  '/Dep-sito-CH/app-fiado.js',   // FIX-04: estava ausente — fiado não funcionava offline
+  '/Dep-sito-CH/firebase.js',
+  '/Dep-sito-CH/sync.js',
   // Ícones PWA
-  '/icon-72.png',
-  '/icon-96.png',
-  '/icon-128.png',
-  '/icon-144.png',
-  '/icon-152.png',
-  '/icon-192.png',
-  '/icon-384.png',
-  '/icon-512.png'
+  '/Dep-sito-CH/icon-72.png',
+  '/Dep-sito-CH/icon-96.png',
+  '/Dep-sito-CH/icon-128.png',
+  '/Dep-sito-CH/icon-144.png',
+  '/Dep-sito-CH/icon-152.png',
+  '/Dep-sito-CH/icon-192.png',
+  '/Dep-sito-CH/icon-384.png',
+  '/Dep-sito-CH/icon-512.png'
 ];
 
 // Instalação: pré-cacheia os assets essenciais
