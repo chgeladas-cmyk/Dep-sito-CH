@@ -6,20 +6,20 @@
 <title>PDV App</title>
 
 <!-- ═══════════════ PWA — Manifest & Icons ═══════════════ -->
-<link rel="manifest" href="/Dep-sito-CH/manifest.json">
+<link rel="manifest" href="/Ch-comercial/manifest.json">
 
 <!-- iOS PWA (Safari não lê o manifest completo) -->
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="PDV App">
-<link rel="apple-touch-icon" href="/Dep-sito-CH/icon-192.png">
-<link rel="apple-touch-icon" sizes="152x152" href="/Dep-sito-CH/icon-152.png">
+<link rel="apple-touch-icon" href="/Ch-comercial/icon-192.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/Ch-comercial/icon-152.png">
 
 <!-- Android / Chrome -->
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#060810">
 <meta name="msapplication-TileColor" content="#060810">
-<meta name="msapplication-TileImage" content="/Dep-sito-CH/icon-144.png">
+<meta name="msapplication-TileImage" content="/Ch-comercial/icon-144.png">
 
 <!-- SEO / OG mínimo -->
 <meta name="description" content="Sistema PDV — vendas, delivery e financeiro">
@@ -2545,7 +2545,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Registra o SW após o load para não bloquear o boot do app
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/Dep-sito-CH/sw.js', { scope: '/Dep-sito-CH/' })
+    navigator.serviceWorker.register('/Ch-comercial/sw.js', { scope: '/Ch-comercial/' })
       .then(reg => {
         console.info('[PWA] SW registrado:', reg.scope);
 

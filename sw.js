@@ -3,30 +3,30 @@
 const CACHE_NAME = 'pdv-app-v4'; // nome genérico — isolamento real é feito pelo domínio
 
 const ASSETS_TO_CACHE = [
-  '/Dep-sito-CH/',
-  '/Dep-sito-CH/index.html',
-  '/Dep-sito-CH/manifest.json',
+  '/Ch-comercial/',
+  '/Ch-comercial/index.html',
+  '/Ch-comercial/manifest.json',
   // Módulos JS — obrigatórios para funcionamento offline
-  '/Dep-sito-CH/app-dialogs.js',
-  '/Dep-sito-CH/app-core.js',
-  '/Dep-sito-CH/app-financeiro.js',
-  '/Dep-sito-CH/app-ia.js',
-  '/Dep-sito-CH/app-delivery.js',
-  '/Dep-sito-CH/app-ponto.js',
-  '/Dep-sito-CH/app-comanda.js',
-  '/Dep-sito-CH/app-notif.js',
-  '/Dep-sito-CH/app-fiado.js',   // FIX-04: estava ausente — fiado não funcionava offline
-  '/Dep-sito-CH/firebase.js',
-  '/Dep-sito-CH/sync.js',
+  '/Ch-comercial/app-dialogs.js',
+  '/Ch-comercial/app-core.js',
+  '/Ch-comercial/app-financeiro.js',
+  '/Ch-comercial/app-ia.js',
+  '/Ch-comercial/app-delivery.js',
+  '/Ch-comercial/app-ponto.js',
+  '/Ch-comercial/app-comanda.js',
+  '/Ch-comercial/app-notif.js',
+  '/Ch-comercial/app-fiado.js',   // FIX-04: estava ausente — fiado não funcionava offline
+  '/Ch-comercial/firebase.js',
+  '/Ch-comercial/sync.js',
   // Ícones PWA
-  '/Dep-sito-CH/icon-72.png',
-  '/Dep-sito-CH/icon-96.png',
-  '/Dep-sito-CH/icon-128.png',
-  '/Dep-sito-CH/icon-144.png',
-  '/Dep-sito-CH/icon-152.png',
-  '/Dep-sito-CH/icon-192.png',
-  '/Dep-sito-CH/icon-384.png',
-  '/Dep-sito-CH/icon-512.png'
+  '/Ch-comercial/icon-72.png',
+  '/Ch-comercial/icon-96.png',
+  '/Ch-comercial/icon-128.png',
+  '/Ch-comercial/icon-144.png',
+  '/Ch-comercial/icon-152.png',
+  '/Ch-comercial/icon-192.png',
+  '/Ch-comercial/icon-384.png',
+  '/Ch-comercial/icon-512.png'
 ];
 
 // Instalação: pré-cacheia os assets essenciais
