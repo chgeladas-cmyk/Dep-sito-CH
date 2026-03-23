@@ -497,7 +497,7 @@ const CaixaService = (() => {
 
     const vendasHoje = Store.Selectors.getVendas().filter(v => _dataVenda(v) === hoje);
     const cfg        = Store.Selectors.getConfig();
-    const nomeLoja   = cfg.nome || 'CH Geladas';
+    const nomeLoja   = cfg.nome || 'PDV App';
 
     const totalBruto   = vendasHoje.reduce((a, v) => a + (v.total  || 0), 0);
     const totalLucro   = vendasHoje.reduce((a, v) => a + (v.lucro  || 0), 0);

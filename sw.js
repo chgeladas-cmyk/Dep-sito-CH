@@ -1,6 +1,6 @@
 // CH Geladas PDV — Service Worker
 // BUMP esta versão a cada deploy para forçar atualização do cache nos clientes
-const CACHE_NAME = 'ch-geladas-v4'; // FIX-04: bump obrigatório — app-fiado.js adicionado ao cache
+const CACHE_NAME = 'pdv-app-v4'; // nome genérico — isolamento real é feito pelo domínio
 
 const ASSETS_TO_CACHE = [
   '/Dep-sito-CH/',

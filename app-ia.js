@@ -576,7 +576,7 @@ const IAService = (() => {
       .map(([nome,d]) => ({ nome, qtd: d.qtd, receita: Number(d.receita.toFixed(2)) }));
 
     return {
-      estabelecimento: config.nome || 'CH Geladas',
+      estabelecimento: config.nome || 'PDV App',
       data: new Date().toLocaleDateString('pt-BR', { weekday:'long', year:'numeric', month:'long', day:'numeric' }),
       estoque: {
         total: estoque.length,
@@ -677,7 +677,7 @@ const IARenderer = (() => {
             </div>
             <div class="flex-1 min-w-0">
               <h2 class="text-sm font-black text-white">Análise Inteligente</h2>
-              <p class="text-[10px] text-violet-400 font-bold">${config.nome || 'CH Geladas'} · ${cards.length} análise(s) ativas</p>
+              <p class="text-[10px] text-violet-400 font-bold">${config.nome || 'PDV App'} · ${cards.length} análise(s) ativas</p>
             </div>
             <button onclick="IARenderer.renderIA()" class="w-9 h-9 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/5 flex items-center justify-center text-slate-400 hover:text-white transition-all" title="Atualizar">
               <i class="fas fa-sync-alt text-xs"></i>

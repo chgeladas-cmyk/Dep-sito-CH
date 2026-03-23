@@ -28,9 +28,27 @@ import {
 /* ═══════════════════════════════════════════════════════════════════
    CONSTANTS
 ═══════════════════════════════════════════════════════════════════ */
-const STORAGE_KEY          = 'CH_GELADAS_DB_ENTERPRISE';
-const FIRESTORE_COLLECTION = 'ch_geladas';
-const FIRESTORE_DOC_ID     = 'sistema';
+
+/** Lê LOJA_CONFIG do localStorage (sem dependências externas) */
+function _getLojaConfig() {
+  try { return JSON.parse(localStorage.getItem('LOJA_CONFIG') || '{}'); }
+  catch (e) { return {}; }
+}
+const _lojaCfg = _getLojaConfig();
+
+/** Deriva chave de storage isolada por projeto Firebase */
+function _deriveKey(suffix, fallback) {
+  const pid = _lojaCfg.firebase?.projectId;
+  if (pid && pid !== 'ch-geladas') {
+    const slug = pid.toUpperCase().replace(/-/g, '_').replace(/[^A-Z0-9_]/g, '');
+    return `PDV_${suffix}_${slug}`;
+  }
+  return fallback;
+}
+
+const STORAGE_KEY          = _deriveKey('DB',      'CH_GELADAS_DB_ENTERPRISE');
+const FIRESTORE_COLLECTION = _lojaCfg.firestoreCollection || 'ch_geladas';
+const FIRESTORE_DOC_ID     = _lojaCfg.firestoreDocId     || 'sistema';
 
 const FIREBASE_WAIT_MS     = 5_000;   // timeout aguardando Firebase inicializar
 const BACKUP_DEBOUNCE_MS   = 1_500;   // debounce de escrita no Firestore

@@ -1228,7 +1228,7 @@ function finExportarFechamentoCaixa() {
   const hoje = Utils.todayISO();
   const dispHoje = Utils.today();
   const cfg = Store.Selectors.getConfig();
-  const nomeLoja = cfg.nome || 'CH Geladas';
+  const nomeLoja = cfg.nome || 'PDV App';
 
   function _dataVenda(v) {
     const raw = v.dataCurta || (v.data || '').slice(0, 10) || '';
@@ -1338,7 +1338,7 @@ function exportarRomaneioDelivery() {
   if (!pedidos.length) { UIService.showToast('Aviso', 'Sem pedidos ativos para romaneio', 'warning'); return; }
 
   const cfg      = Store.Selectors.getConfig();
-  const nomeLoja = cfg.nome || 'CH Geladas';
+  const nomeLoja = cfg.nome || 'PDV App';
   const hoje     = Utils.today();
   const SEP      = '═'.repeat(46);
   const sep      = '─'.repeat(46);

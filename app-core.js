@@ -17,8 +17,25 @@
 /* ═══════════════════════════════════════════════════════════════════
    CONSTANTS
 ═══════════════════════════════════════════════════════════════════ */
+
+/** Lê LOJA_CONFIG antes do resto do app (chaves isoladas por projeto) */
+function _lojaConfigEarly() {
+  try { return JSON.parse(localStorage.getItem('LOJA_CONFIG') || '{}'); }
+  catch (e) { return {}; }
+}
+const _lojaEarly = _lojaConfigEarly();
+
+function _deriveStorageKey(suffix, fallback) {
+  const pid = _lojaEarly.firebase?.projectId;
+  if (pid && pid !== 'ch-geladas') {
+    const slug = pid.toUpperCase().replace(/-/g, '_').replace(/[^A-Z0-9_]/g, '');
+    return `PDV_${suffix}_${slug}`;
+  }
+  return fallback;
+}
+
 const CONSTANTS = Object.freeze({
-  STORAGE_KEY: 'CH_GELADAS_DB_ENTERPRISE',
+  STORAGE_KEY: _deriveStorageKey('DB', 'CH_GELADAS_DB_ENTERPRISE'),
   SYNC_LOCK_DURATION_MS: 5_000,  // reduzido de 15s→5s: protege saves locais sem bloquear sync simultâneo
   TOAST_DURATION_MS: 2_800,
   SYNC_FALLBACK_MS: 5_000,
@@ -1814,7 +1831,7 @@ const VendaService = (() => {
   /** Preenche o recibo visual no modal */
   function _populateRecibo(venda) {
     const cfg      = Store.Selectors.getConfig();
-    const nomeLoja = cfg.nome || 'CH Geladas';
+    const nomeLoja = cfg.nome || 'PDV App';
     const _s       = (id, v) => { const el = Utils.el(id); if (el) el.textContent = v ?? ''; };
     const _t       = v => Utils.formatCurrency(v);
 
@@ -1920,7 +1937,7 @@ const VendaService = (() => {
    BACKUP MANAGER — Backups locais automáticos + restauração
 ═══════════════════════════════════════════════════════════════════ */
 const BackupManager = (() => {
-  const BACKUP_KEY    = 'CH_GELADAS_BACKUPS';
+  const BACKUP_KEY    = _deriveStorageKey('BACKUPS', 'CH_GELADAS_BACKUPS');
   const MAX_BACKUPS   = 7;
   let   _scheduledTimer = null;
 
@@ -2081,6 +2098,10 @@ const Bootstrap = (() => {
    */
   function init() {
     UIService.hideLoader();
+
+    // Aplica identidade visual da loja (tema, logo) o mais cedo possível
+    _initLojaIdentidade();
+
     if (!AuthService.isLogged()) {
       UIService.showLock();
     }
@@ -2141,6 +2162,9 @@ const Bootstrap = (() => {
     // NOTA: o estado já foi carregado em Bootstrap.init() antes do login.
     // Não recarregamos aqui para evitar sobrescrever um sync remoto que possa
     // ter ocorrido entre init() e o momento do login.
+
+    // Aplica identidade visual (pode ter sido sobrescrita antes do login)
+    _initLojaIdentidade();
 
     // Renderiza módulos iniciais
     const _nomeCfg = Store.Selectors.getConfig()?.nome;
@@ -2391,7 +2415,7 @@ async function copiarRecibo() {
   const v = VendaService.getLastSale();
   if (!v) return;
   const cfg      = Store.Selectors.getConfig();
-  const nomeLoja = cfg.nome || 'CH Geladas';
+  const nomeLoja = cfg.nome || 'PDV App';
   const fmt      = val => Utils.formatCurrency(val);
   const SEP      = '─'.repeat(28);
 
@@ -2533,6 +2557,38 @@ function abrirConfig() {
   if (dot) dot.className = `absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${somAtivo ? 'translate-x-5' : 'translate-x-0.5'}`;
   if (el('cfgSecAdmTool')) el('cfgSecAdmTool').classList.toggle('hidden', !AuthService.isAdmin());
   _renderCfgCategorias();
+
+  // ── Identidade Visual ──────────────────────────────────────
+  const loja = _getLojaConfig();
+  const corEl = el('cfgCorPrimaria');
+  if (corEl) corEl.value = loja.corPrimaria || '#3b82f6';
+  const logoPreview = el('cfgLogoPreview');
+  if (logoPreview) {
+    const nomeCfg = cfg.nome || loja.nome || 'CH';
+    const corCfg  = loja.corPrimaria || '#3b82f6';
+    const src     = loja.logoBase64 || _gerarAvatarSVG(nomeCfg, corCfg);
+    logoPreview.innerHTML = `<img src="${src}" style="width:100%;height:100%;object-fit:contain;border-radius:10px;">`;
+  }
+  window._cfgLogoTemp = undefined;
+
+  // ── Firebase + Export/Import (só ADM) ─────────────────────
+  const isAdm = AuthService.isAdmin();
+  const fbSec = el('cfgSecFirebase');
+  if (fbSec) fbSec.classList.toggle('hidden', !isAdm);
+  const expSec = el('cfgSecExportImport');
+  if (expSec) expSec.classList.toggle('hidden', !isAdm);
+
+  if (isAdm) {
+    const ta = el('cfgFirebaseJson');
+    if (ta) ta.value = loja.firebase ? JSON.stringify(loja.firebase, null, 2) : '';
+    const colEl = el('cfgFirestoreCollection');
+    if (colEl) { colEl.value = loja.firestoreCollection || 'ch_geladas'; delete colEl.dataset.userEdited; }
+    const docEl = el('cfgFirestoreDocId');
+    if (docEl) docEl.value = loja.firestoreDocId || 'sistema';
+    const statusEl = el('cfgFirebaseJsonStatus');
+    if (statusEl) statusEl.classList.add('hidden');
+  }
+
   UIService.openModal('modalConfig');
 }
 
@@ -2614,6 +2670,43 @@ async function salvarConfig() {
   Store.mutate(state => { state.config = { ...cfg }; });
   SyncService.persist();
 
+  // ── Salvar identidade visual e Firebase em LOJA_CONFIG ────
+  const loja = _getLojaConfig();
+  loja.nome = nome;
+  const corPrimaria = (Utils.el('cfgCorPrimaria')?.value || '').trim();
+  if (corPrimaria) loja.corPrimaria = corPrimaria;
+
+  // Logo (undefined = sem alteração, '' = remover, string = novo logo)
+  if (window._cfgLogoTemp !== undefined) {
+    loja.logoBase64 = window._cfgLogoTemp || null;
+  }
+
+  // Firebase (só ADM, só se preenchido)
+  if (AuthService.isAdmin()) {
+    const jsonStr = (Utils.el('cfgFirebaseJson')?.value || '').trim();
+    if (jsonStr) {
+      try {
+        const fbCfg = JSON.parse(jsonStr);
+        if (fbCfg.apiKey && fbCfg.projectId) {
+          loja.firebase = fbCfg;
+          loja.firestoreCollection = (Utils.el('cfgFirestoreCollection')?.value || '').trim() || 'ch_geladas';
+          loja.firestoreDocId      = (Utils.el('cfgFirestoreDocId')?.value      || '').trim() || 'sistema';
+        }
+      } catch (e) { /* JSON inválido — utilizador não preencheu */ }
+    } else if (jsonStr === '') {
+      // Campo apagado → remover config personalizada
+      delete loja.firebase;
+      delete loja.firestoreCollection;
+      delete loja.firestoreDocId;
+    }
+  }
+
+  _saveLojaConfig(loja);
+
+  // Aplica tema e logos imediatamente
+  if (corPrimaria) aplicarTema(corPrimaria);
+  _atualizarLogos(loja.logoBase64 || null, loja.nome, corPrimaria || '#3b82f6');
+
   if (nome) document.title = nome;
   RenderService.renderCatFilter();
   RenderService.renderCatalogo();
@@ -2631,7 +2724,7 @@ async function testarTelegram() {
     const res  = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text: '✅ CH Geladas PDV — notificações Telegram activas!' })
+      body: JSON.stringify({ chat_id: chatId, text: `✅ ${Store.Selectors.getConfig()?.nome || 'PDV'} — notificações Telegram activas!` })
     });
     const data = await res.json();
     if (data.ok) UIService.showToast('Telegram OK!', 'Mensagem enviada com sucesso', 'success');
@@ -2639,6 +2732,275 @@ async function testarTelegram() {
   } catch (e) {
     UIService.showToast('Erro de rede', e.message, 'error');
   }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   LOJA CONFIG — Identidade Visual, Tema, Firebase, Export/Import
+══════════════════════════════════════════════════════════════════ */
+
+/** Lê a configuração da loja */
+function _getLojaConfig() {
+  try { return JSON.parse(localStorage.getItem('LOJA_CONFIG') || '{}'); }
+  catch (e) { return {}; }
+}
+
+/** Persiste a configuração da loja */
+function _saveLojaConfig(cfg) {
+  localStorage.setItem('LOJA_CONFIG', JSON.stringify(cfg));
+}
+
+/** Gera SVG de avatar com iniciais da empresa */
+function _gerarAvatarSVG(nome, cor) {
+  const iniciais = (nome || 'CH')
+    .split(/\s+/).filter(Boolean).slice(0, 2)
+    .map(w => w[0].toUpperCase()).join('') || '?';
+  const c = cor || '#3b82f6';
+  const r = parseInt(c.slice(1,3), 16);
+  const g = parseInt(c.slice(3,5), 16);
+  const b = parseInt(c.slice(5,7), 16);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+    <rect width="100" height="100" rx="22" fill="rgba(${r},${g},${b},0.15)"/>
+    <rect width="100" height="100" rx="22" fill="none" stroke="rgba(${r},${g},${b},0.4)" stroke-width="2"/>
+    <text x="50" y="50" text-anchor="middle" dominant-baseline="central"
+      font-family="system-ui,sans-serif" font-weight="900"
+      font-size="${iniciais.length > 1 ? 38 : 44}" fill="${c}">${iniciais}</text>
+  </svg>`;
+  return 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)));
+}
+
+/** Aplica cor primária via CSS variables — afeta nav, botões, badges */
+function aplicarTema(cor) {
+  if (!cor || !/^#[0-9a-fA-F]{6}$/.test(cor)) return;
+  const r = parseInt(cor.slice(1,3), 16);
+  const g = parseInt(cor.slice(3,5), 16);
+  const b = parseInt(cor.slice(5,7), 16);
+
+  let style = document.getElementById('ch-tema-style');
+  if (!style) {
+    style = document.createElement('style');
+    style.id = 'ch-tema-style';
+    document.head.appendChild(style);
+  }
+  style.textContent = `
+    :root { --ch-primary: ${cor}; --ch-primary-rgb: ${r},${g},${b}; }
+    .nav-btn.active { color: ${cor} !important; border-bottom-color: ${cor} !important; background: rgba(${r},${g},${b},.06) !important; }
+    .fin-tab.active { color: ${cor} !important; border-bottom-color: ${cor} !important; background: rgba(${r},${g},${b},.07) !important; }
+    .label { color: ${cor} !important; }
+    .bg-blue-600 { background-color: ${cor} !important; }
+    .hover\\:bg-blue-500:hover { background-color: ${cor}dd !important; }
+    .text-blue-400 { color: ${cor} !important; }
+    .text-blue-300 { color: ${cor}bb !important; }
+    .border-blue-500\\/20, .border-blue-500\\/30 { border-color: rgba(${r},${g},${b},.25) !important; }
+    .bg-blue-500\\/10, .bg-blue-600\\/10 { background: rgba(${r},${g},${b},.10) !important; }
+    .bg-blue-500\\/8, .bg-blue-600\\/8 { background: rgba(${r},${g},${b},.08) !important; }
+    .badge.b-blue { background: rgba(${r},${g},${b},.18) !important; color: ${cor} !important; border-color: rgba(${r},${g},${b},.3) !important; }
+    #syncDot { background: ${cor} !important; }
+  `;
+}
+
+/** Atualiza todos os slots de logo no app */
+function _atualizarLogos(logoSrc, nomeLoja, corPrimaria) {
+  const src = logoSrc || _gerarAvatarSVG(nomeLoja, corPrimaria);
+  ['chLogoHeader', 'chLogoLogin', 'chLogoLoading'].forEach(id => {
+    const wrap = document.getElementById(id);
+    if (!wrap) return;
+    const img = wrap.querySelector('img');
+    if (img) { img.src = src; img.alt = nomeLoja || 'Logo'; }
+  });
+}
+
+/** Aplica identidade visual no arranque do app */
+function _initLojaIdentidade() {
+  const loja = _getLojaConfig();
+  const nome = loja.nome || Store.Selectors.getConfig()?.nome || 'PDV App';
+  if (loja.corPrimaria) aplicarTema(loja.corPrimaria);
+  _atualizarLogos(loja.logoBase64 || null, nome, loja.corPrimaria || '#3b82f6');
+  // Atualiza title e meta-title dinamicamente
+  document.title = nome;
+  const metaTitle = document.querySelector('meta[name="apple-mobile-web-app-title"]');
+  if (metaTitle) metaTitle.setAttribute('content', nome);
+}
+
+/* ── Cfg: Logo ──────────────────────────────────────────────────── */
+function cfgLogoUpload(input) {
+  const file = input?.files?.[0];
+  if (!file) return;
+  if (file.size > 600 * 1024) {
+    UIService.showToast('Imagem muito grande', 'Máximo 600 KB', 'error'); return;
+  }
+  const reader = new FileReader();
+  reader.onload = e => {
+    const src = e.target.result;
+    const preview = Utils.el('cfgLogoPreview');
+    if (preview) preview.innerHTML = `<img src="${src}" style="width:100%;height:100%;object-fit:contain;border-radius:10px;">`;
+    window._cfgLogoTemp = src;
+    UIService.showToast('Logo carregado', 'Clique em Guardar para confirmar', 'success');
+  };
+  reader.readAsDataURL(file);
+}
+
+function cfgLogoRemover() {
+  window._cfgLogoTemp = '';
+  const loja = _getLojaConfig();
+  const nome = (Utils.el('cfgNome')?.value || loja.nome || 'CH').trim();
+  const cor  = Utils.el('cfgCorPrimaria')?.value || loja.corPrimaria || '#3b82f6';
+  const preview = Utils.el('cfgLogoPreview');
+  if (preview) preview.innerHTML = `<img src="${_gerarAvatarSVG(nome, cor)}" style="width:100%;height:100%;object-fit:contain;">`;
+}
+
+/* ── Cfg: Tema / Cor ────────────────────────────────────────────── */
+function cfgPreviewCor(cor) {
+  if (!cor) return;
+  aplicarTema(cor);
+  // Actualiza avatar se não há logo personalizado
+  const loja = _getLojaConfig();
+  if (!loja.logoBase64 && !window._cfgLogoTemp) {
+    const nome = (Utils.el('cfgNome')?.value || loja.nome || 'CH').trim();
+    const preview = Utils.el('cfgLogoPreview');
+    if (preview) preview.innerHTML = `<img src="${_gerarAvatarSVG(nome, cor)}" style="width:100%;height:100%;object-fit:contain;">`;
+  }
+}
+
+function cfgSetCor(cor) {
+  const inp = Utils.el('cfgCorPrimaria');
+  if (inp) inp.value = cor;
+  cfgPreviewCor(cor);
+}
+
+/* ── Cfg: Firebase ──────────────────────────────────────────────── */
+
+/** Auto-sugere nome da coleção a partir do projectId */
+function cfgFirebaseJsonChange() {
+  const jsonStr = (Utils.el('cfgFirebaseJson')?.value || '').trim();
+  const statusEl = Utils.el('cfgFirebaseJsonStatus');
+  if (statusEl) statusEl.classList.add('hidden');
+  try {
+    const cfg = JSON.parse(jsonStr);
+    if (cfg.projectId) {
+      const colEl = Utils.el('cfgFirestoreCollection');
+      if (colEl && !colEl.dataset.userEdited) {
+        colEl.value = cfg.projectId.toLowerCase().replace(/-/g,'_').replace(/[^a-z0-9_]/g,'');
+      }
+    }
+  } catch (e) { /* JSON ainda incompleto */ }
+}
+
+/** Testa credenciais Firebase via REST API sem reinicializar o SDK */
+async function cfgTestarFirebase() {
+  const jsonStr = (Utils.el('cfgFirebaseJson')?.value || '').trim();
+  if (!jsonStr) { UIService.showToast('Cole o JSON Firebase', '', 'warning'); return; }
+
+  let config;
+  try { config = JSON.parse(jsonStr); }
+  catch (e) { UIService.showToast('JSON inválido', e.message, 'error'); return; }
+
+  if (!config.apiKey || !config.projectId) {
+    UIService.showToast('Config incompleta', 'apiKey e projectId obrigatórios', 'error'); return;
+  }
+
+  const col      = (Utils.el('cfgFirestoreCollection')?.value || 'ch_geladas').trim();
+  const docId    = (Utils.el('cfgFirestoreDocId')?.value      || 'sistema').trim();
+  const statusEl = Utils.el('cfgFirebaseJsonStatus');
+
+  UIService.showToast('Testando...', 'A verificar credenciais', 'info');
+  if (statusEl) { statusEl.textContent = '⏳ A verificar...'; statusEl.className = 'text-[9px] mt-1 text-slate-400 font-bold'; statusEl.classList.remove('hidden'); }
+
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${config.projectId}/databases/(default)/documents/${col}/${docId}?key=${config.apiKey}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10_000);
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
+
+    if ([200, 404].includes(res.status)) {
+      UIService.showToast('✅ Firebase válido!', `Projeto: ${config.projectId}`, 'success');
+      if (statusEl) { statusEl.textContent = `✅ Credenciais OK — projeto: ${config.projectId}`; statusEl.className = 'text-[9px] mt-1 text-emerald-400 font-bold'; }
+    } else if (res.status === 403) {
+      UIService.showToast('✅ Credenciais OK', 'Ajuste as regras do Firestore', 'success');
+      if (statusEl) { statusEl.textContent = '✅ Credenciais válidas (403 — verifique regras Firestore)'; statusEl.className = 'text-[9px] mt-1 text-amber-400 font-bold'; }
+    } else if (res.status === 400) {
+      UIService.showToast('❌ API Key inválida', 'Verifique a apiKey', 'error');
+      if (statusEl) { statusEl.textContent = '❌ API Key inválida ou projecto errado'; statusEl.className = 'text-[9px] mt-1 text-red-400 font-bold'; }
+    } else {
+      UIService.showToast('⚠️ Resposta inesperada', `HTTP ${res.status}`, 'warning');
+      if (statusEl) { statusEl.textContent = `⚠️ HTTP ${res.status} — verifique configuração`; statusEl.className = 'text-[9px] mt-1 text-amber-400 font-bold'; }
+    }
+  } catch (e) {
+    const msg = e.name === 'AbortError' ? 'Timeout — servidor sem resposta' : e.message;
+    UIService.showToast('❌ Erro de rede', msg, 'error');
+    if (statusEl) { statusEl.textContent = `❌ ${msg}`; statusEl.className = 'text-[9px] mt-1 text-red-400 font-bold'; }
+  }
+}
+
+/** Restaura Firebase padrão e recarrega */
+async function cfgResetFirebase() {
+  const ok = await Dialog.confirm(
+    'Restaurar Firebase padrão?',
+    'A configuração personalizada será removida e o app vai recarregar com o Firebase padrão (padrão).'
+  );
+  if (!ok) return;
+  const loja = _getLojaConfig();
+  delete loja.firebase;
+  delete loja.firestoreCollection;
+  delete loja.firestoreDocId;
+  _saveLojaConfig(loja);
+  UIService.showToast('Firebase restaurado', 'A recarregar...', 'success');
+  setTimeout(() => location.reload(), 1400);
+}
+
+/* ── Cfg: Export / Import ───────────────────────────────────────── */
+function cfgExportarConfig() {
+  const loja = _getLojaConfig();
+  const cfg  = Store.Selectors.getConfig();
+  const exportData = {
+    _versao: '1.0',
+    _exportadoEm: new Date().toISOString(),
+    loja,
+    preferencias: {
+      nome: cfg.nome,
+      alertaStock: cfg.alertaStock,
+      categorias: cfg.categorias,
+      sessionTimeoutMinutes: cfg.sessionTimeoutMinutes,
+      somNotificacoes: cfg.somNotificacoes,
+    },
+  };
+  const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  const nome = (loja.nome || cfg.nome || 'loja').replace(/\s+/g, '-').toLowerCase();
+  a.href = url; a.download = `config-${nome}-${Date.now()}.json`; a.click();
+  URL.revokeObjectURL(url);
+  UIService.showToast('Config exportada!', 'Ficheiro JSON guardado', 'success');
+}
+
+function cfgImportarConfig(input) {
+  const file = input?.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      if (!data._versao || (!data.loja && !data.preferencias)) throw new Error('Formato de ficheiro inválido');
+      const nomeLoja = data.loja?.nome || data.preferencias?.nome || '?';
+      const ok = await Dialog.confirm(
+        'Importar configuração?',
+        `Vai substituir identidade visual, Firebase e preferências.\nLoja: ${nomeLoja}`
+      );
+      if (!ok) { input.value = ''; return; }
+      if (data.loja) _saveLojaConfig(data.loja);
+      if (data.preferencias) {
+        const cfg = { ...Store.Selectors.getConfig(), ...data.preferencias };
+        Store.mutate(state => { state.config = cfg; });
+        SyncService.persist();
+      }
+      UIService.showToast('Config importada!', 'A recarregar...', 'success');
+      setTimeout(() => location.reload(), 1400);
+    } catch (e) {
+      UIService.showToast('Erro ao importar', e.message, 'error');
+    }
+    input.value = '';
+  };
+  reader.readAsText(file);
 }
 
 /* ── Inicia a aplicação ─────────────────────────────────────────── */
