@@ -3030,3 +3030,23 @@ function cfgToggleSom() {
   btn.className = `relative w-11 h-6 rounded-full transition-all flex-shrink-0 ${!ativo ? 'bg-blue-600' : 'bg-slate-700'}`;
   if (dot) dot.className = `absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${!ativo ? 'translate-x-5' : 'translate-x-0.5'}`;
 }
+
+async function forcarAtualizacaoApp() {
+  UIService.showToast('Atualizando...', 'Limpando cache e reiniciando', 'info');
+  try {
+    // Desregistra todos os Service Workers
+    if ('serviceWorker' in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map(r => r.unregister()));
+    }
+    // Limpa todos os caches do Cache API
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+    }
+  } catch (e) {
+    console.warn('[forcarAtualizacaoApp]', e);
+  }
+  // Recarrega sem cache
+  setTimeout(() => window.location.reload(true), 800);
+}
