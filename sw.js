@@ -1,6 +1,6 @@
 // CH Geladas PDV — Service Worker
 // BUMP esta versão a cada deploy para forçar atualização do cache nos clientes
-const CACHE_NAME = 'pdv-app-v4'; // nome genérico — isolamento real é feito pelo domínio
+const CACHE_NAME = 'pdv-app-v5'; // nome genérico — isolamento real é feito pelo domínio
 
 const ASSETS_TO_CACHE = [
   '/Ch-comercial/',
